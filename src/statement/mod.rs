@@ -11,6 +11,32 @@ use std::marker::PhantomData;
 pub use self::types::OdbcType;
 pub use self::types::{SqlDate, SqlTime, SqlSsTime2, SqlTimestamp};
 
+// Allocate CHUNK_LEN elements at a time
+const CHUNK_LEN: usize = 64;
+struct Chunks<T>(Vec<Box<[T; CHUNK_LEN]>>);
+
+/// Heap allocator that will keep allocated element pointers valid until the allocator is dropped or cleared
+impl<T: Copy + Default> Chunks<T> {
+    fn new() -> Chunks<T> {
+        Chunks(Vec::new())
+    }
+
+    fn alloc(&mut self, i: usize, value: T) -> *mut T {
+        let chunk_no = i / CHUNK_LEN;
+        if self.0.len() <= chunk_no {
+            // Resizing Vec that holds pointers to heap allocated arrays so we don't invalidate the references
+            self.0.resize(chunk_no + 1, Box::new([T::default(); CHUNK_LEN]))
+        }
+        let v = self.0[chunk_no].get_mut(i % CHUNK_LEN).unwrap();
+        *v = value;
+        v as *mut T
+    }
+
+    fn clear(&mut self) {
+        self.0.clear()
+    }
+}
+
 /// `Statement` state used to represent a freshly allocated connection
 pub enum Allocated {}
 /// `Statement` state used to represent a statement with a result set cursor. A statement is most
@@ -47,7 +73,7 @@ pub struct Statement<'con, 'b, S, R> {
     // Indicates wether there is an open result set or not associated with this statement.
     result: PhantomData<R>,
     parameters: PhantomData<&'b [u8]>,
-    param_ind_buffers: Vec<ffi::SQLLEN>,
+    param_ind_buffers: Chunks<ffi::SQLLEN>,
 }
 
 /// Used to retrieve data from the fields of a query result
@@ -80,7 +106,7 @@ impl<'a, 'b, S, R> Statement<'a, 'b, S, R> {
             state: PhantomData,
             result: PhantomData,
             parameters: PhantomData,
-            param_ind_buffers: vec![]
+            param_ind_buffers: Chunks::new()
         }
     }
 }
@@ -95,9 +121,13 @@ impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
         self.raii.affected_row_count().into_result(self)
     }
 
-    pub fn tables(mut self) -> Result<Statement<'a, 'b, Executed, HasResult>> {
-        self.raii.tables().into_result(&self)?;
+    pub fn tables(mut self, catalog_name: &String, schema_name: &String, table_name: &String, table_type: &String) -> Result<Statement<'a, 'b, Executed, HasResult>> {
+        self.raii.tables(catalog_name, schema_name, table_name, table_type).into_result(&self)?;
         Ok(Statement::with_raii(self.raii))
+    }
+
+    pub fn tables_str(self, catalog_name: &str, schema_name: &str, table_name: &str, table_type: &str) -> Result<Statement<'a, 'b, Executed, HasResult>> {
+        self.tables(&catalog_name.to_owned(), &schema_name.to_owned(), &table_name.to_owned(), &table_type.to_owned())
     }
 
     /// Executes a preparable statement, using the current values of the parameter marker variables
@@ -106,6 +136,23 @@ impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
     /// `SQLExecDirect` is the fastest way to submit an SQL statement for one-time execution.
     pub fn exec_direct(mut self, statement_text: &str) -> Result<ResultSetState<'a, 'b, Executed>> {
         if self.raii.exec_direct(statement_text).into_result(&self)? {
+            let num_cols = self.raii.num_result_cols().into_result(&self)?;
+            if num_cols > 0 {
+                Ok(ResultSetState::Data(Statement::with_raii(self.raii)))
+            } else {
+                Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+            }
+        } else {
+            Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+        }
+    }
+
+    /// Executes a preparable statement, using the current values of the parameter marker variables
+    /// if any parameters exist in the statement.
+    ///
+    /// `SQLExecDirect` is the fastest way to submit an SQL statement for one-time execution.
+    pub fn exec_direct_bytes(mut self, bytes: &[u8]) -> Result<ResultSetState<'a, 'b, Executed>> {
+        if self.raii.exec_direct_bytes(bytes).into_result(&self)? {
             let num_cols = self.raii.num_result_cols().into_result(&self)?;
             if num_cols > 0 {
                 Ok(ResultSetState::Data(Statement::with_raii(self.raii)))
@@ -306,6 +353,27 @@ impl Raii<ffi::Stmt> {
         }
     }
 
+    fn exec_direct_bytes(&mut self, bytes: &[u8]) -> Return<bool> {
+        let length = bytes.len();
+        if length > ffi::SQLINTEGER::max_value() as usize {
+            panic!("Statement text too long");
+        }
+        match unsafe {
+            ffi::SQLExecDirect(
+                self.handle(),
+                bytes.as_ptr(),
+                length as ffi::SQLINTEGER,
+            )
+        } {
+            ffi::SQL_SUCCESS => Return::Success(true),
+            ffi::SQL_SUCCESS_WITH_INFO => Return::SuccessWithInfo(true),
+            ffi::SQL_ERROR => Return::Error,
+            ffi::SQL_NEED_DATA => panic!("SQLExecDirec returned SQL_NEED_DATA"),
+            ffi::SQL_NO_DATA => Return::Success(false),
+            r => panic!("SQLExecDirect returned unexpected result: {:?}", r),
+        }
+    }
+
     /// Fetches the next rowset of data from the result set and returns data for all bound columns.
     fn fetch(&mut self) -> Return<bool> {
         match unsafe { ffi::SQLFetch(self.handle()) } {
@@ -317,11 +385,7 @@ impl Raii<ffi::Stmt> {
         }
     }
 
-    fn tables(&mut self) -> Return<()> {
-        let catalog_name = "";
-        let schema_name = "";
-        let table_name = "";
-        let table_type = "TABLE";
+    fn tables(&mut self, catalog_name: &String, schema_name: &String, table_name: &String, table_type: &String) -> Return<()> {
         unsafe {
             match ffi::SQLTables(
                 self.handle(),
