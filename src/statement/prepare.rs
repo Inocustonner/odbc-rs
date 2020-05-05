@@ -38,8 +38,8 @@ impl<'a, 'b> Statement<'a, 'b, Allocated, NoResult> {
     /// # }
     /// ```
     pub fn prepare(mut self, sql_text: &str) -> Result<Statement<'a, 'b, Prepared, NoResult>> {
-        self.raii.prepare(sql_text).into_result(&mut self)?;
-        Ok(Statement::with_raii(self.raii))
+        self.raii.as_mut().unwrap().prepare(sql_text).into_result(&mut self)?;
+        Ok(Statement::with_raii(self.raii.take().unwrap()))
     }
 
 
@@ -63,8 +63,8 @@ impl<'a, 'b> Statement<'a, 'b, Allocated, NoResult> {
     /// # }
     /// ```
     pub fn prepare_bytes(mut self, bytes: &[u8]) -> Result<Statement<'a, 'b, Prepared, NoResult>> {
-        self.raii.prepare_byte(bytes).into_result(&mut self)?;
-        Ok(Statement::with_raii(self.raii))
+        self.raii.as_mut().unwrap().prepare_byte(bytes).into_result(&mut self)?;
+        Ok(Statement::with_raii(self.raii.take().unwrap()))
     }
 }
 
@@ -74,25 +74,25 @@ impl<'a, 'b> Statement<'a, 'b, Prepared, NoResult> {
     /// Can be called successfully only when the statement is in the prepared, executed, or
     /// positioned state. If the statement does not return columns the result will be 0.
     pub fn num_result_cols(&self) -> Result<i16> {
-        self.raii.num_result_cols().into_result(self)
+        self.raii.as_ref().unwrap().num_result_cols().into_result(self)
     }
 
     /// Returns description struct for result set column with a given index. Note: indexing is starting from 1.
     pub fn describe_col(&self, idx: u16) -> Result<ColumnDescriptor> {
-        self.raii.describe_col(idx).into_result(self)
+        self.raii.as_ref().unwrap().describe_col(idx).into_result(self)
     }
 
     /// Executes a prepared statement.
     pub fn execute(mut self) -> Result<ResultSetState<'a, 'b, Prepared>> {
-        if self.raii.execute().into_result(&mut self)? {
-            let num_cols = self.raii.num_result_cols().into_result(&self)?;
+        if self.raii.as_mut().unwrap().execute().into_result(&mut self)? {
+            let num_cols = self.raii.as_ref().unwrap().num_result_cols().into_result(&self)?;
             if num_cols > 0 {
-                Ok(ResultSetState::Data(Statement::with_raii(self.raii)))
+                Ok(ResultSetState::Data(Statement::with_raii(self.raii.take().unwrap())))
             } else {
-                Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+                Ok(ResultSetState::NoData(Statement::with_raii(self.raii.take().unwrap())))
             }
         } else {
-            Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+            Ok(ResultSetState::NoData(Statement::with_raii(self.raii.take().unwrap())))
         }
     }
 }

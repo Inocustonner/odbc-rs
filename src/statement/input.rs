@@ -48,6 +48,7 @@ impl<'a, 'b, S, R> Statement<'a, 'b, S, R> {
         let ind_ptr = self.param_ind_buffers.alloc(parameter_index as usize, ind);
 
         self.raii
+            .as_mut().unwrap()
             .bind_input_parameter(parameter_index, value, ind_ptr)
             .into_result(&self)?;
         Ok(self)
@@ -57,8 +58,8 @@ impl<'a, 'b, S, R> Statement<'a, 'b, S, R> {
     /// and returns a new one those lifetime is no longer limited by the buffers bound.
     pub fn reset_parameters(mut self) -> Result<Statement<'a, 'a, S, R>> {
         self.param_ind_buffers.clear();
-        self.raii.reset_parameters().into_result(&mut self)?;
-        Ok(Statement::with_raii(self.raii))
+        self.raii.as_mut().unwrap().reset_parameters().into_result(&mut self)?;
+        Ok(Statement::with_raii(self.raii.take().unwrap()))
     }
 }
 

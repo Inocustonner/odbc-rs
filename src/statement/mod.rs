@@ -66,7 +66,7 @@ use std::ptr::null_mut;
 
 /// A `Statement` can be used to execute queries and retrieves results.
 pub struct Statement<'con, 'b, S, R> {
-    raii: Raii<ffi::Stmt>,
+    raii: Option<Raii<ffi::Stmt>>,
     // we use phantom data to tell the borrow checker that we need to keep the data source alive
     // for the lifetime of the statement
     parent: PhantomData<&'con Connection<'con>>,
@@ -75,6 +75,10 @@ pub struct Statement<'con, 'b, S, R> {
     result: PhantomData<R>,
     parameters: PhantomData<&'b [u8]>,
     param_ind_buffers: Chunks<ffi::SQLLEN>,
+}
+
+impl<S, R> Drop for Statement<'_, '_, S, R> {
+    fn drop(&mut self) { }
 }
 
 /// Used to retrieve data from the fields of a query result
@@ -95,14 +99,14 @@ pub struct ColumnDescriptor {
 impl<'a, 'b, S, R> Handle for Statement<'a, 'b, S, R> {
     type To = ffi::Stmt;
     unsafe fn handle(&self) -> ffi::SQLHSTMT {
-        self.raii.handle()
+        self.raii.as_ref().unwrap().handle()
     }
 }
 
 impl<'a, 'b, S, R> Statement<'a, 'b, S, R> {
     fn with_raii(raii: Raii<ffi::Stmt>) -> Self {
         Statement {
-            raii: raii,
+            raii: Some(raii),
             parent: PhantomData,
             state: PhantomData,
             result: PhantomData,
@@ -119,7 +123,7 @@ impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
     }
 
     pub fn affected_row_count(&self) -> Result<ffi::SQLLEN> {
-        self.raii.affected_row_count().into_result(self)
+        self.raii.as_ref().unwrap().affected_row_count().into_result(self)
     }
 
     pub fn tables(self, catalog_name: &String, schema_name: &String, table_name: &String, table_type: &String) -> Result<Statement<'a, 'b, Executed, HasResult>> {
@@ -131,8 +135,8 @@ impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
     }
 
     pub fn tables_opt_str(mut self, catalog_name: Option<&str>, schema_name: Option<&str>, table_name:Option<&str>, table_type: &str) -> Result<Statement<'a, 'b, Executed, HasResult>> {
-        self.raii.tables(catalog_name, schema_name, table_name, table_type).into_result(&self)?;
-        Ok(Statement::with_raii(self.raii))
+        self.raii.as_mut().unwrap().tables(catalog_name, schema_name, table_name, table_type).into_result(&self)?;
+        Ok(Statement::with_raii(self.raii.take().unwrap()))
     }
 
     /// Executes a preparable statement, using the current values of the parameter marker variables
@@ -140,15 +144,15 @@ impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
     ///
     /// `SQLExecDirect` is the fastest way to submit an SQL statement for one-time execution.
     pub fn exec_direct(mut self, statement_text: &str) -> Result<ResultSetState<'a, 'b, Executed>> {
-        if self.raii.exec_direct(statement_text).into_result(&self)? {
-            let num_cols = self.raii.num_result_cols().into_result(&self)?;
+        if self.raii.as_mut().unwrap().exec_direct(statement_text).into_result(&self)? {
+            let num_cols = self.raii.as_ref().unwrap().num_result_cols().into_result(&self)?;
             if num_cols > 0 {
-                Ok(ResultSetState::Data(Statement::with_raii(self.raii)))
+                Ok(ResultSetState::Data(Statement::with_raii(self.raii.take().unwrap())))
             } else {
-                Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+                Ok(ResultSetState::NoData(Statement::with_raii(self.raii.take().unwrap())))
             }
         } else {
-            Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+            Ok(ResultSetState::NoData(Statement::with_raii(self.raii.take().unwrap())))
         }
     }
 
@@ -157,15 +161,15 @@ impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
     ///
     /// `SQLExecDirect` is the fastest way to submit an SQL statement for one-time execution.
     pub fn exec_direct_bytes(mut self, bytes: &[u8]) -> Result<ResultSetState<'a, 'b, Executed>> {
-        if self.raii.exec_direct_bytes(bytes).into_result(&self)? {
-            let num_cols = self.raii.num_result_cols().into_result(&self)?;
+        if self.raii.as_mut().unwrap().exec_direct_bytes(bytes).into_result(&self)? {
+            let num_cols = self.raii.as_ref().unwrap().num_result_cols().into_result(&self)?;
             if num_cols > 0 {
-                Ok(ResultSetState::Data(Statement::with_raii(self.raii)))
+                Ok(ResultSetState::Data(Statement::with_raii(self.raii.take().unwrap())))
             } else {
-                Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+                Ok(ResultSetState::NoData(Statement::with_raii(self.raii.take().unwrap())))
             }
         } else {
-            Ok(ResultSetState::NoData(Statement::with_raii(self.raii)))
+            Ok(ResultSetState::NoData(Statement::with_raii(self.raii.take().unwrap())))
         }
     }
 }
@@ -173,7 +177,7 @@ impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
 impl<'a, 'b, S> Statement<'a, 'b, S, HasResult> {
 
     pub fn affected_row_count(&self) -> Result<ffi::SQLLEN> {
-        self.raii.affected_row_count().into_result(self)
+        self.raii.as_ref().unwrap().affected_row_count().into_result(self)
     }
 
     /// The number of columns in a result set
@@ -181,17 +185,17 @@ impl<'a, 'b, S> Statement<'a, 'b, S, HasResult> {
     /// Can be called successfully only when the statement is in the prepared, executed, or
     /// positioned state. If the statement does not return columns the result will be 0.
     pub fn num_result_cols(&self) -> Result<i16> {
-        self.raii.num_result_cols().into_result(self)
+        self.raii.as_ref().unwrap().num_result_cols().into_result(self)
     }
 
     /// Returns description struct for result set column with a given index. Note: indexing is starting from 1.
     pub fn describe_col(&self, idx: u16) -> Result<ColumnDescriptor> {
-        self.raii.describe_col(idx).into_result(self)
+        self.raii.as_ref().unwrap().describe_col(idx).into_result(self)
     }
 
     /// Fetches the next rowset of data from the result set and returns data for all bound columns.
     pub fn fetch<'c>(&'c mut self) -> Result<Option<Cursor<'c, 'a, 'b, S>>> {
-        if self.raii.fetch().into_result(self)? {
+        if self.raii.as_mut().unwrap().fetch().into_result(self)? {
             Ok(Some(Cursor {
                 stmt: self,
                 buffer: vec![0; 512],
@@ -229,8 +233,8 @@ impl<'a, 'b, S> Statement<'a, 'b, S, HasResult> {
     /// # };
     /// ```
     pub fn close_cursor(mut self) -> Result<Statement<'a, 'b, S, NoResult>> {
-        self.raii.close_cursor().into_result(&self)?;
-        Ok(Statement::with_raii(self.raii))
+        self.raii.as_mut().unwrap().close_cursor().into_result(&self)?;
+        Ok(Statement::with_raii(self.raii.take().unwrap()))
     }
 }
 
@@ -240,7 +244,7 @@ impl<'a, 'b, 'c, S> Cursor<'a, 'b, 'c, S> {
     where
         T: Output<'d>,
     {
-        T::get_data(&mut self.stmt.raii, col_or_param_num, &mut self.buffer).into_result(self.stmt)
+        T::get_data(&mut self.stmt.raii.as_mut().unwrap(), col_or_param_num, &mut self.buffer).into_result(self.stmt)
     }
 }
 
@@ -451,6 +455,6 @@ unsafe impl<'con, 'param, C, P> safe::Handle for Statement<'con, 'param, C, P> {
     const HANDLE_TYPE : ffi::HandleType = ffi::SQL_HANDLE_STMT;
 
     fn handle(&self) -> ffi::SQLHANDLE {
-        <Raii<ffi::Stmt> as safe::Handle>::handle(&self.raii)
+        <Raii<ffi::Stmt> as safe::Handle>::handle(&self.raii.as_ref().unwrap())
     }
 }
