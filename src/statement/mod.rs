@@ -66,10 +66,7 @@ use std::ptr::null_mut;
 
 /// A `Statement` can be used to execute queries and retrieves results.
 pub struct Statement<'con, 'b, S, R> {
-    raii: Raii<ffi::Stmt>,
-    // we use phantom data to tell the borrow checker that we need to keep the data source alive
-    // for the lifetime of the statement
-    parent: PhantomData<&'con Connection<'con>>,
+    raii: Raii<'con, ffi::Stmt>,
     state: PhantomData<S>,
     // Indicates wether there is an open result set or not associated with this statement.
     result: PhantomData<R>,
@@ -100,10 +97,9 @@ impl<'a, 'b, S, R> Handle for Statement<'a, 'b, S, R> {
 }
 
 impl<'a, 'b, S, R> Statement<'a, 'b, S, R> {
-    fn with_raii(raii: Raii<ffi::Stmt>) -> Self {
+    fn with_raii(raii: Raii<'a, ffi::Stmt>) -> Self {
         Statement {
             raii: raii,
-            parent: PhantomData,
             state: PhantomData,
             result: PhantomData,
             parameters: PhantomData,
@@ -244,7 +240,7 @@ impl<'a, 'b, 'c, S> Cursor<'a, 'b, 'c, S> {
     }
 }
 
-impl Raii<ffi::Stmt> {
+impl<'i> Raii<'i, ffi::Stmt> {
     fn affected_row_count(&self) -> Return<ffi::SQLLEN> {
         let mut count: ffi::SQLLEN = 0;
         unsafe {

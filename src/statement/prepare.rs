@@ -97,7 +97,7 @@ impl<'a, 'b> Statement<'a, 'b, Prepared, NoResult> {
     }
 }
 
-impl Raii<ffi::Stmt> {
+impl<'i> Raii<'i, ffi::Stmt> {
     fn prepare(&mut self, sql_text: &str) -> Return<()> {
         match unsafe {
             ffi::SQLPrepare(

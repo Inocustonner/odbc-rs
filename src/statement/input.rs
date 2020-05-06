@@ -62,7 +62,7 @@ impl<'a, 'b, S, R> Statement<'a, 'b, S, R> {
     }
 }
 
-impl Raii<ffi::Stmt> {
+impl<'i> Raii<'i, ffi::Stmt> {
     fn bind_input_parameter<'c, T>(&mut self, parameter_index: u16, value: &'c T, str_len_or_ind_ptr: *mut ffi::SQLLEN) -> Return<()>
     where
         T: OdbcType<'c>,

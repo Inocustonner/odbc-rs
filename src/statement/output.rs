@@ -4,8 +4,8 @@ use super::types::OdbcType;
 
 /// Indicates that a type can be retrieved using `Cursor::get_data`
 pub unsafe trait Output<'a>: Sized {
-    fn get_data(
-        stmt: &mut Raii<ffi::Stmt>,
+    fn get_data<'i>(
+        stmt: &mut Raii<'i, ffi::Stmt>,
         col_or_param_num: u16,
         buffer: &'a mut Vec<u8>,
     ) -> Return<Option<Self>>;
@@ -15,8 +15,8 @@ unsafe impl<'a, T> Output<'a> for T
 where
     T: OdbcType<'a>,
 {
-    fn get_data(
-        stmt: &mut Raii<ffi::Stmt>,
+    fn get_data<'i>(
+        stmt: &mut Raii<'i, ffi::Stmt>,
         col_or_param_num: u16,
         buffer: &'a mut Vec<u8>,
     ) -> Return<Option<Self>> {
@@ -24,7 +24,7 @@ where
     }
 }
 
-impl Raii<ffi::Stmt> {
+impl<'i> Raii<'i, ffi::Stmt> {
     fn get_data<'a, T>(
         &mut self,
         col_or_param_num: u16,
