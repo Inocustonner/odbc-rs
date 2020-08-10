@@ -41,6 +41,7 @@ use odbc_object::OdbcObject;
 use raii::Raii;
 use result::{Return, into_result, try_into_option};
 pub use odbc_safe as safe;
+pub use odbc_safe::{AutocommitMode, AutocommitOn, AutocommitOff};
 
 mod odbc_object;
 mod raii;

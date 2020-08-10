@@ -2,7 +2,6 @@ extern crate odbc;
 extern crate odbc_safe;
 
 use odbc::*;
-use odbc_safe::AutocommitOn;
 
 #[test]
 fn list_tables() {
@@ -180,8 +179,8 @@ fn prepared_execution() {
     fn execute_query<'a>(
         year: u16,
         expected: &str,
-        stmt: Statement<'a, 'a, Prepared, NoResult, AutocommitOn>,
-    ) -> Result<Statement<'a, 'a, Prepared, NoResult, AutocommitOn>> {
+        stmt: Statement<'a, 'a, Prepared, NoResult>,
+    ) -> Result<Statement<'a, 'a, Prepared, NoResult>> {
         let stmt = stmt.bind_parameter(1, &year)?;
         let stmt = if let Data(mut stmt) = stmt.execute()? {
             {

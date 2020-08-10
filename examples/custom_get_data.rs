@@ -6,7 +6,6 @@ extern crate odbc_safe;
 
 use odbc::*;
 use chrono::prelude::*;
-use odbc_safe::AutocommitMode;
 
 trait Extract {
     fn extract<T>(&mut self, index: u16) -> Option<T>
@@ -14,7 +13,7 @@ trait Extract {
         T: MySupportedType;
 }
 
-impl<'s, 'a: 's, S: 's, AC: AutocommitMode> Extract for Cursor<'s, 'a, 'a, S, AC> {
+impl<'s, 'a: 's, S: 's> Extract for Cursor<'s, 'a, 'a, S> {
     fn extract<T>(&mut self, index: u16) -> Option<T>
     where
         T: MySupportedType,
@@ -27,15 +26,15 @@ trait MySupportedType
 where
     Self: Sized,
 {
-    fn extract_from<'a, 'con, S, AC: AutocommitMode>(
-        cursor: &mut odbc::Cursor<'a, 'con, 'con, S, AC>,
+    fn extract_from<'a, 'con, S>(
+        cursor: &mut odbc::Cursor<'a, 'con, 'con, S>,
         index: u16,
     ) -> Option<Self>;
 }
 
 impl MySupportedType for DateTime<Local> {
-    fn extract_from<'a, 'con, S, AC: AutocommitMode>(
-        cursor: &mut odbc::Cursor<'a, 'con, 'con, S, AC>,
+    fn extract_from<'a, 'con, S>(
+        cursor: &mut odbc::Cursor<'a, 'con, 'con, S>,
         index: u16,
     ) -> Option<Self> {
         cursor.get_data(index).expect("Can't get column").map(

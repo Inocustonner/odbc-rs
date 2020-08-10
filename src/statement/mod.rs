@@ -57,19 +57,18 @@ pub enum NoResult {}
 /// A executed statement may be in one of two states. Either the statement has yielded a result set
 /// or not. Keep in mind that some ODBC drivers just yield empty result sets on e.g. `INSERT`
 /// Statements
-pub enum ResultSetState<'a, 'b, S, AC: AutocommitMode> {
-    Data(Statement<'a, 'b, S, HasResult, AC>),
-    NoData(Statement<'a, 'b, S, NoResult, AC>),
+pub enum ResultSetState<'a, 'b, S> {
+    Data(Statement<'a, 'b, S, HasResult>),
+    NoData(Statement<'a, 'b, S, NoResult>),
 }
 pub use ResultSetState::*;
 use std::ptr::null_mut;
 use odbc_safe::AutocommitMode;
 
 /// A `Statement` can be used to execute queries and retrieves results.
-pub struct Statement<'a, 'b, S, R, AC: AutocommitMode> {
+pub struct Statement<'a, 'b, S, R> {
     raii: Raii<'a, ffi::Stmt>,
     state: PhantomData<S>,
-    autocommit_mode: PhantomData<AC>,
     // Indicates wether there is an open result set or not associated with this statement.
     result: PhantomData<R>,
     parameters: PhantomData<&'b [u8]>,
@@ -79,8 +78,8 @@ pub struct Statement<'a, 'b, S, R, AC: AutocommitMode> {
 }
 
 /// Used to retrieve data from the fields of a query result
-pub struct Cursor<'s, 'a: 's, 'b: 's, S: 's, AC: AutocommitMode> {
-    stmt: &'s mut Statement<'a, 'b, S, HasResult, AC>,
+pub struct Cursor<'s, 'a: 's, 'b: 's, S: 's> {
+    stmt: &'s mut Statement<'a, 'b, S, HasResult>,
     buffer: Vec<u8>,
 }
 
@@ -93,18 +92,17 @@ pub struct ColumnDescriptor {
     pub nullable: Option<bool>,
 }
 
-impl<'a, 'b, S, R, AC: AutocommitMode> Handle for Statement<'a, 'b, S, R, AC> {
+impl<'a, 'b, S, R> Handle for Statement<'a, 'b, S, R> {
     type To = ffi::Stmt;
     unsafe fn handle(&self) -> ffi::SQLHSTMT {
         self.raii.handle()
     }
 }
 
-impl<'a, 'b, S, R, AC: AutocommitMode> Statement<'a, 'b, S, R, AC> {
+impl<'a, 'b, S, R> Statement<'a, 'b, S, R> {
     fn with_raii(raii: Raii<'a, ffi::Stmt>) -> Self {
         Statement {
             raii: raii,
-            autocommit_mode: PhantomData,
             state: PhantomData,
             result: PhantomData,
             parameters: PhantomData,
@@ -114,8 +112,8 @@ impl<'a, 'b, S, R, AC: AutocommitMode> Statement<'a, 'b, S, R, AC> {
     }
 }
 
-impl<'a, 'b, 'env, AC: AutocommitMode> Statement<'a, 'b, Allocated, NoResult, AC> {
-    pub fn with_parent(ds: &'a Connection<'env, AC>) -> Result<Self> {
+impl<'a, 'b, 'env> Statement<'a, 'b, Allocated, NoResult> {
+    pub fn with_parent<AC: AutocommitMode>(ds: &'a Connection<'env, AC>) -> Result<Self> {
         let raii = Raii::with_parent(ds).into_result(ds)?;
         Ok(Self::with_raii(raii))
     }
@@ -124,15 +122,15 @@ impl<'a, 'b, 'env, AC: AutocommitMode> Statement<'a, 'b, Allocated, NoResult, AC
         self.raii.affected_row_count().into_result(self)
     }
 
-    pub fn tables(self, catalog_name: &String, schema_name: &String, table_name: &String, table_type: &String) -> Result<Statement<'a, 'b, Executed, HasResult, AC>> {
+    pub fn tables(self, catalog_name: &String, schema_name: &String, table_name: &String, table_type: &String) -> Result<Statement<'a, 'b, Executed, HasResult>> {
         self.tables_str(catalog_name.as_str(), schema_name.as_str(), table_name.as_str(), table_type.as_str())
     }
 
-    pub fn tables_str(self, catalog_name: &str, schema_name: &str, table_name: &str, table_type: &str) -> Result<Statement<'a, 'b, Executed, HasResult, AC>> {
+    pub fn tables_str(self, catalog_name: &str, schema_name: &str, table_name: &str, table_type: &str) -> Result<Statement<'a, 'b, Executed, HasResult>> {
         self.tables_opt_str(Option::Some(catalog_name), Option::Some(schema_name), Option::Some(table_name), table_type)
     }
 
-    pub fn tables_opt_str(mut self, catalog_name: Option<&str>, schema_name: Option<&str>, table_name:Option<&str>, table_type: &str) -> Result<Statement<'a, 'b, Executed, HasResult, AC>> {
+    pub fn tables_opt_str(mut self, catalog_name: Option<&str>, schema_name: Option<&str>, table_name:Option<&str>, table_type: &str) -> Result<Statement<'a, 'b, Executed, HasResult>> {
         self.raii.tables(catalog_name, schema_name, table_name, table_type).into_result(&self)?;
         Ok(Statement::with_raii(self.raii))
     }
@@ -141,7 +139,7 @@ impl<'a, 'b, 'env, AC: AutocommitMode> Statement<'a, 'b, Allocated, NoResult, AC
     /// if any parameters exist in the statement.
     ///
     /// `SQLExecDirect` is the fastest way to submit an SQL statement for one-time execution.
-    pub fn exec_direct(mut self, statement_text: &str) -> Result<ResultSetState<'a, 'b, Executed, AC>> {
+    pub fn exec_direct(mut self, statement_text: &str) -> Result<ResultSetState<'a, 'b, Executed>> {
         if self.raii.exec_direct(statement_text).into_result(&self)? {
             let num_cols = self.raii.num_result_cols().into_result(&self)?;
             if num_cols > 0 {
@@ -158,7 +156,7 @@ impl<'a, 'b, 'env, AC: AutocommitMode> Statement<'a, 'b, Allocated, NoResult, AC
     /// if any parameters exist in the statement.
     ///
     /// `SQLExecDirect` is the fastest way to submit an SQL statement for one-time execution.
-    pub fn exec_direct_bytes(mut self, bytes: &[u8]) -> Result<ResultSetState<'a, 'b, Executed, AC>> {
+    pub fn exec_direct_bytes(mut self, bytes: &[u8]) -> Result<ResultSetState<'a, 'b, Executed>> {
         if self.raii.exec_direct_bytes(bytes).into_result(&self)? {
             let num_cols = self.raii.num_result_cols().into_result(&self)?;
             if num_cols > 0 {
@@ -172,7 +170,7 @@ impl<'a, 'b, 'env, AC: AutocommitMode> Statement<'a, 'b, Allocated, NoResult, AC
     }
 }
 
-impl<'a, 'b, S, AC: AutocommitMode> Statement<'a, 'b, S, HasResult, AC> {
+impl<'a, 'b, S> Statement<'a, 'b, S, HasResult> {
 
     pub fn affected_row_count(&self) -> Result<ffi::SQLLEN> {
         self.raii.affected_row_count().into_result(self)
@@ -192,7 +190,7 @@ impl<'a, 'b, S, AC: AutocommitMode> Statement<'a, 'b, S, HasResult, AC> {
     }
 
     /// Fetches the next rowset of data from the result set and returns data for all bound columns.
-    pub fn fetch<'s>(&'s mut self) -> Result<Option<Cursor<'s, 'a, 'b, S, AC>>> {
+    pub fn fetch<'s>(&'s mut self) -> Result<Option<Cursor<'s, 'a, 'b, S>>> {
         if self.raii.fetch().into_result(self)? {
             Ok(Some(Cursor {
                 stmt: self,
@@ -230,13 +228,13 @@ impl<'a, 'b, S, AC: AutocommitMode> Statement<'a, 'b, S, HasResult, AC> {
     /// # Ok(())
     /// # };
     /// ```
-    pub fn close_cursor(mut self) -> Result<Statement<'a, 'b, S, NoResult, AC>> {
+    pub fn close_cursor(mut self) -> Result<Statement<'a, 'b, S, NoResult>> {
         self.raii.close_cursor().into_result(&self)?;
         Ok(Statement::with_raii(self.raii))
     }
 }
 
-impl<'a, 'b, 'c, S, AC: AutocommitMode> Cursor<'a, 'b, 'c, S, AC> {
+impl<'a, 'b, 'c, S> Cursor<'a, 'b, 'c, S> {
     /// Retrieves data for a single column in the result set
     ///
     /// ## Panics
@@ -453,7 +451,7 @@ impl<'p> Raii<'p, ffi::Stmt> {
     }
 }
 
-unsafe impl<'con, 'param, C, P, AC: AutocommitMode> safe::Handle for Statement<'con, 'param, C, P, AC> {
+unsafe impl<'con, 'param, C, P> safe::Handle for Statement<'con, 'param, C, P> {
 
     const HANDLE_TYPE : ffi::HandleType = ffi::SQL_HANDLE_STMT;
 
