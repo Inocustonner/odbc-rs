@@ -14,11 +14,18 @@ categories = ["api-bindings", "database"]
 [features]
 default = []
 travis = []
+encoding1251 = ["encoding_rs"]
 
 [dependencies]
 odbc-sys = "0.6.3"
 odbc-safe = "0.4.1"
 log = "0.4.1"
+cfg-if = "1.0"
+
+[dependencies.encoding_rs]
+version = "0.8.*"
+features = ["fast-legacy-encode"]
+optional = true
 
 [dev-dependencies]
 chrono = "0.4"

@@ -3,6 +3,11 @@ use std::{fmt, cmp};
 use std::ffi::CStr;
 use std::error::Error;
 
+#[cfg(feature = "encoding1251")]
+extern crate encoding_rs;
+#[cfg(feature = "encoding1251")]
+use self::encoding_rs::WINDOWS_1251;
+
 pub const MAX_DIAGNOSTIC_MESSAGE_SIZE: usize = 1024;
 
 /// ODBC Diagnostic Record
@@ -51,17 +56,42 @@ impl fmt::Display for DiagnosticRecord {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Todo: replace unwrap with `?` in Rust 1.17
         let state = CStr::from_bytes_with_nul(&self.state).unwrap();
-        let message = CStr::from_bytes_with_nul(
-            &self.message[0..(self.message_length as usize + 1)],
-        ).unwrap();
 
-        write!(
-            f,
-            "State: {}, Native error: {}, Message: {}",
-            state.to_str().unwrap(),
-            self.native_error,
-            message.to_str().unwrap()
-        )
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "encoding1251"))] {
+                let message = CStr::from_bytes_with_nul(
+                    &self.message[0..(self.message_length as usize + 1)],
+                ).unwrap();
+                write!(
+                    f,
+                    "State: {}, Native error: {}, Message: {}",
+                    state.to_str().unwrap(),
+                    self.native_error,
+                    message.to_str().unwrap()
+                )
+            } else {
+                let bytes: &[u8] = &self.message[0..(self.message_length as usize + 1)];
+                let mut decoder = WINDOWS_1251.new_decoder();
+    
+                let mut intermediate_buffer_bytes = [0u8; 4096];
+                // Is there a safe way to create a stack-allocated &mut str?
+                let mut message: &mut str =
+                    unsafe { std::mem::transmute(&mut intermediate_buffer_bytes[..]) };
+                
+                let (_, _, len, _) = decoder.decode_to_str(
+                    &bytes,
+                    &mut message,
+                    true
+                );
+                write!(
+                    f,
+                    "State: {}, Native error: {}, Message: {}",
+                    state.to_str().unwrap(),
+                    self.native_error,
+                    &message[0..len]
+                )
+            }
+        }
     }
 }
 
@@ -97,7 +127,7 @@ impl<D> GetDiagRec for D
 where
     D: safe::Diagnostics,
 {
-    fn get_diag_rec(&self, record_number: i16) -> Option<(DiagnosticRecord)> {
+    fn get_diag_rec(&self, record_number: i16) -> Option<DiagnosticRecord> {
         use safe::ReturnOption::*;
         let mut message = [0; MAX_DIAGNOSTIC_MESSAGE_SIZE];
         match self.diagnostics(record_number, &mut message) {
